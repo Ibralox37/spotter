@@ -277,6 +277,26 @@ textarea.feld { resize: none; height: 84px; }
 .steckbrief { margin-top: 10px; font-size: 14px; line-height: 1.45; opacity: .85; }
 .steckbrief a { color: var(--c-info); }
 .profi-knoepfe { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+/* Holo-Sticker: Regenbogen-Glanz */
+@keyframes holoRand { 0% { box-shadow: 0 0 0 4px #ff4fd8, 0 0 30px #ff4fd8; } 25% { box-shadow: 0 0 0 4px #ffd24a, 0 0 30px #ffd24a; } 50% { box-shadow: 0 0 0 4px #2fcf78, 0 0 30px #2fcf78; } 75% { box-shadow: 0 0 0 4px #00aaff, 0 0 30px #00aaff; } 100% { box-shadow: 0 0 0 4px #ff4fd8, 0 0 30px #ff4fd8; } }
+@keyframes holoGlanz { 0% { background-position: 120% 0; } 100% { background-position: -120% 0; } }
+.sticker.holo, .mini.holo { animation: holoRand 3s linear infinite; }
+.sticker.holo .bild { position: relative; }
+.sticker.holo .bild::after { content: ''; position: absolute; inset: 0; pointer-events: none; mix-blend-mode: overlay;
+  background: linear-gradient(115deg, transparent 15%, rgba(255,79,216,.55) 30%, rgba(255,210,74,.55) 42%, rgba(47,207,120,.55) 54%, rgba(0,170,255,.55) 66%, transparent 82%);
+  background-size: 250% 100%; animation: holoGlanz 2.6s linear infinite; }
+.holo-mark { position: absolute; top: 20px; left: 20px; z-index: 2; background: linear-gradient(90deg, #ff4fd8, #ffd24a, #2fcf78, #00aaff); color: #fff; font-family: var(--orbitron); font-size: 11px; font-weight: 900; letter-spacing: 1px; padding: 4px 9px; border-radius: 20px; text-shadow: 0 1px 2px rgba(0,0,0,.45); }
+/* Album */
+.album-gruppe { display: flex; justify-content: space-between; align-items: baseline; margin: 18px 0 8px; font-family: var(--orbitron); font-size: 13px; font-weight: 700; letter-spacing: 1px; }
+.album-gruppe span { font-family: var(--rajdhani); font-size: 14px; opacity: .65; letter-spacing: 0; }
+.album-raster { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+.slot { --farbe: rgba(255,255,255,.1); border-radius: 12px; background: var(--karte); border: 2px solid rgba(255,255,255,.08); padding: 5px 5px 7px; text-align: center; font-size: 12.5px; font-weight: 700; line-height: 1.15; color: white; font-family: inherit; }
+.slot .f { aspect-ratio: 4 / 3; border-radius: 8px; background: rgba(255,255,255,.05); display: flex; align-items: center; justify-content: center; font-size: 26px; overflow: hidden; margin-bottom: 4px; }
+.slot .f img { width: 100%; height: 100%; object-fit: cover; }
+.slot .s { font-size: 10.5px; font-weight: 700; margin-top: 2px; }
+.slot.zu { opacity: .55; }
+.slot.zu .f { filter: grayscale(1); }
+.slot.hat { border-color: var(--farbe); box-shadow: 0 0 10px var(--farbe); }
 .sticker .pruef { font-size: 13px; font-weight: 700; margin-top: 2px; }
 .sticker .pruef.ok { color: #12a05a; }
 .sticker .pruef.mittel { color: #b8860b; }
@@ -402,6 +422,14 @@ textarea.feld { resize: none; height: 84px; }
 <section id="s-profil" class="screen">
   <div class="kopf"><button class="zurueck" data-zurueck aria-label="Zurück">←</button><h2>PROFIL</h2></div>
   <div id="profil-inhalt"></div>
+</section>
+
+<!-- ======================= ALBUM ======================= -->
+<section id="s-album" class="screen">
+  <div class="kopf"><button class="zurueck" data-zurueck aria-label="Zurück">←</button><h2>ALBUM</h2><span class="levelChip" id="album-zahl"></span></div>
+  <div class="chips" id="album-tabs" style="margin-top:0"></div>
+  <div class="garage-summe" id="album-info"></div>
+  <div id="album-inhalt"></div>
 </section>
 
 <!-- ======================= AUFNÄHER ======================= -->
@@ -629,6 +657,11 @@ const PATCHES = [
   { id: 'supercar',   emoji: '🏁', name: 'Supercar-Jäger',    text: 'Ein exotisches oder legendäres Auto', fort: st => [st.supercar ? 1 : 0, 1] },
   { id: 'jaeger',     emoji: '🎯', name: 'Jagd-Sieger',       text: 'Ziel einer Wochenend-Jagd gefunden', fort: st => [st.jagdSiege, 1] },
   { id: 'million',    emoji: '💰', name: 'Millionär',         text: '1 Million € Vermögen',         fort: st => [Math.min(st.summe, 1000000), 1000000] },
+  // neu in Version 1.3
+  { id: 'holo',       emoji: '✨', name: 'Holo-Jäger',        text: 'Dein erster Holo-Sticker',     fort: st => [st.holo, 1] },
+  { id: 'album10',    emoji: '📒', name: 'Album-Starter',     text: '10 Automodelle im Album',      fort: st => [st.album.size, 10] },
+  { id: 'album50',    emoji: '🗃️', name: 'Album-Profi',       text: '50 Automodelle im Album',      fort: st => [st.album.size, 50] },
+  { id: 'arten30',    emoji: '🧭', name: 'Entdecker',         text: '30 verschiedene Fahrzeugarten', fort: st => [st.typen.size, 30] },
 ];
 
 // Texte, wenn ein Foto nicht zählt. Das kostet nie etwas – einfach nochmal.
@@ -729,6 +762,8 @@ function bereinigen(liste) {
       ts: +s.ts || Date.now(),
       jagd: !!s.jagd,
       geprueft: ['modell', 'marke', 'nein'].includes(s.geprueft) ? s.geprueft : '',
+      holo: s.holo === true,
+      listenModell: String(s.listenModell || '').slice(0, 60),
       wiki: s.wiki && typeof s.wiki === 'object' && typeof s.wiki.text === 'string'
         ? { titel: String(s.wiki.titel || '').slice(0, 80), text: s.wiki.text.slice(0, 300),
             url: typeof s.wiki.url === 'string' && s.wiki.url.startsWith('https://de.wikipedia.org/') ? s.wiki.url : '' }
@@ -864,9 +899,14 @@ function frage(icon, titel, text, jaText, neinText, gefahr = false) {
 }
 
 /* ---------------- Statistik ---------------- */
+// Unter welchem Namen ein Sticker ins Auto-Album kommt (nur wenn die Profi-KI das Modell bestätigt hat)
+function albumName(s) {
+  if (s.listenModell) return s.listenModell;
+  return s.geprueft === 'modell' && s.marke && s.modell ? `${s.marke} ${s.modell}` : '';
+}
 function statistik() {
   const st = { anzahl: sticker.length, summe: 0, garage: {}, stufe: [0, 0, 0, 0, 0, 0], typen: new Set(), supercar: false,
-    jagdSiege: Object.keys(profil.jagdSiege).length, heute: 0, monat: 0, monatAnzahl: 0 };
+    jagdSiege: Object.keys(profil.jagdSiege).length, heute: 0, monat: 0, monatAnzahl: 0, holo: 0, album: new Set() };
   for (const g of Object.keys(GARAGEN)) st.garage[g] = 0;
   const heute = tagSchluessel();
   const jetzt = new Date();
@@ -875,6 +915,9 @@ function statistik() {
     st.garage[s.garage]++;
     st.stufe[s.seltenheit]++;
     st.typen.add(s.typ);
+    if (s.holo) st.holo++;
+    const an = albumName(s);
+    if (an) st.album.add(an);
     if (s.garage === 'autos' && (s.seltenheit === 3 || s.seltenheit === 4)) st.supercar = true;
     const d = new Date(s.ts);
     if (tagSchluessel(d) === heute) st.heute++;
@@ -1053,7 +1096,8 @@ function kiLaden() {
   kiVersprechen = (async () => {
     if (!window.tf) await skriptLaden('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js');
     if (!window.mobilenet) await skriptLaden('https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js');
-    modell = await mobilenet.load({ version: 2, alpha: 1.0 });
+    try { modell = await mobilenet.load({ version: 2, alpha: 1.0 }); }
+    catch (e) { await pause(1500); modell = await mobilenet.load({ version: 2, alpha: 1.0 }); }   // zweiter Versuch bei einem kurzen Netz-Aussetzer
     tf.tidy(() => modell.infer(tf.zeros([224, 224, 3]), false));   // einmal warmlaufen lassen
     kiStatus('🤖 KI bereit');
     return modell;
@@ -1533,7 +1577,9 @@ async function stickerErstellen() {
     const sterne = sterneBerechnen(t.p, fang.schaerfe);
     const j = jagdInfo();
     const istJagd = j.aktiv && j.ziel.key === t.key;
-    const wert = Math.max(100, Math.round(wertBerechnen(t, marke, selt, sterne, istJagd, listenModell) * faktor / 100) * 100);
+    // Holo-Sticker: Je schärfer und sicherer das Foto (mehr Sterne), desto größer die Chance (4 bis 8 %)
+    const holo = Math.random() < 0.03 + 0.01 * sterne;
+    const wert = Math.max(100, Math.round(wertBerechnen(t, marke, selt, sterne, istJagd, listenModell) * faktor * (holo ? 3 : 1) / 100) * 100);
     const rangVorher = rangFuer(statistik().summe).rang;
     const blob = await new Promise(ok => fang.canvas.toBlob(ok, 'image/jpeg', 0.85));
     if (!blob) throw new Error('Bild konnte nicht gespeichert werden');
@@ -1542,6 +1588,7 @@ async function stickerErstellen() {
       ts: Date.now(), typ: t.key, garage: t.garage, marke, modell: $('erg-modell').value.trim().slice(0, 30),
       seltenheit: selt, sterne, wert, sicher: Math.round(t.p * 100), jagd: istJagd, bild: blob,
       geprueft, wiki: fang.wiki && typeof fang.wiki === 'object' ? fang.wiki : null,
+      holo, listenModell: geprueft === 'modell' && listenModell ? `${marke} ${listenModell}` : '',
     };
     await Speicher.speichern(s);
     sticker.push(s);
@@ -1579,7 +1626,8 @@ function stickerName(s) {
 function stickerHtml(s) {
   const t = TYP_NACH_KEY[s.typ];
   const sel = SELTENHEIT[s.seltenheit];
-  return `<div class="sticker" style="--farbe:${sel.farbe}">
+  return `<div class="sticker${s.holo ? ' holo' : ''}" style="--farbe:${sel.farbe}">
+    ${s.holo ? '<div class="holo-mark">✨ HOLO</div>' : ''}
     <div class="selt">${esc(sel.name.toUpperCase())}</div>
     ${s.jagd ? '<div class="jagd-mark">🎯 JAGD ×2</div>' : ''}
     <div class="bild"><img src="${esc(bildSrc(s))}" alt=""></div>
@@ -1606,9 +1654,19 @@ function revealZeigen(s, info) {
   if (s.wiki) melde(`📖 Wusstest du? ${s.wiki.text}`, false, nr++);
   if (info.rangNeu) melde(`⬆️ Neuer Rang: ${info.rangNeu.emoji} ${info.rangNeu.name}`, true, nr++);
   for (const pa of info.neuePatches) melde(`🎖️ Neuer Aufnäher: ${pa.emoji} ${pa.name}`, true, nr++);
-  tonReveal(s.seltenheit);
+  if (s.holo) {
+    const d = document.createElement('div');
+    d.className = 'meldung gold'; d.style.animationDelay = '0.4s';
+    d.textContent = '✨ HOLO-STICKER! Er glänzt in Regenbogenfarben und ist 3× so viel wert!';
+    m.prepend(d);
+    $('reveal-sticker').closest('section').querySelector('.reveal-titel').textContent = '✨ HOLO-STICKER! ✨';
+  } else {
+    $('reveal-sticker').closest('section').querySelector('.reveal-titel').textContent = 'NEUER STICKER!';
+  }
+  tonReveal(s.holo ? 4 : s.seltenheit);
   if (navigator.vibrate) navigator.vibrate(s.seltenheit >= 3 && s.seltenheit !== 5 ? [60, 40, 120] : 40);
-  if (s.seltenheit >= 3) konfetti(s.seltenheit === 4 ? 70 : 40, SELTENHEIT[s.seltenheit].farbe);
+  if (s.holo) konfetti(90, '#ff4fd8');
+  else if (s.seltenheit >= 3) konfetti(s.seltenheit === 4 ? 70 : 40, SELTENHEIT[s.seltenheit].farbe);
 }
 function konfetti(anzahl, farbe) {
   const k = document.createElement('div');
@@ -1663,10 +1721,10 @@ function renderGarage() {
       Hier ist noch nichts.<br>Geh raus und spotte ${garageFilter === 'alle' ? 'dein erstes Fahrzeug' : 'etwas für diese Garage'}! 📸</div>`;
     return;
   }
-  raster.innerHTML = liste.map(s => `<button class="mini" style="--farbe:${SELTENHEIT[s.seltenheit].farbe}" data-id="${esc(s.id)}">
+  raster.innerHTML = liste.map(s => `<button class="mini${s.holo ? ' holo' : ''}" style="--farbe:${SELTENHEIT[s.seltenheit].farbe}" data-id="${esc(s.id)}">
       <span class="punkt">${esc(SELTENHEIT[s.seltenheit].name.toUpperCase())}</span>
       <img src="${esc(bildSrc(s))}" alt="" loading="lazy">
-      <div class="n">${esc(stickerName(s))}</div><div class="w">${euro(s.wert)}</div></button>`).join('');
+      <div class="n">${s.holo ? '✨ ' : ''}${esc(stickerName(s))}</div><div class="w">${euro(s.wert)}</div></button>`).join('');
   raster.querySelectorAll('.mini').forEach(el => { el.onclick = () => stickerDetails(el.dataset.id); });
 }
 function stickerDetails(id) {
@@ -1692,9 +1750,95 @@ function stickerDetails(id) {
       if (bildUrls.has(s.id) && s.bild instanceof Blob) URL.revokeObjectURL(bildUrls.get(s.id));
       bildUrls.delete(s.id);
       o.remove();
-      renderGarage();
+      if ($('s-album').classList.contains('aktiv')) renderAlbum(); else renderGarage();
       toast('Sticker gelöscht');
     };
+  });
+}
+
+/* ---------------- Album (wie ein Sammelalbum: jedes Modell und jede Fahrzeugart hat einen Platz) ---------------- */
+let albumTab = 'modelle';
+async function albumOeffnen() {
+  zeige('s-album');
+  if (!window.PROFI_DATEN) {
+    $('album-inhalt').innerHTML = '<div class="leer"><span class="gross">📒</span>Das Album wird geladen …</div>';
+    try { await skriptLaden(PROFI.daten, false); } catch (e) { /* dann nur die Fahrzeugarten */ }
+  }
+  renderAlbum();
+}
+function albumSlot(name, stufe, s, emoji) {
+  if (s) {
+    return `<button class="slot hat" style="--farbe:${SELTENHEIT[s.seltenheit].farbe}" data-id="${esc(s.id)}">
+      <div class="f"><img src="${esc(bildSrc(s))}" alt="" loading="lazy"></div>${s.holo ? '✨ ' : ''}${esc(name)}
+      <div class="s" style="color:${SELTENHEIT[s.seltenheit].farbe}">${esc(SELTENHEIT[s.seltenheit].name)}</div></button>`;
+  }
+  return `<div class="slot zu"><div class="f">${emoji || '🔒'}</div>${esc(name)}
+    <div class="s" style="color:${SELTENHEIT[stufe].farbe}">${esc(SELTENHEIT[stufe].name)}</div></div>`;
+}
+function renderAlbum() {
+  const st = statistik();
+  const liste = window.PROFI_DATEN ? window.PROFI_DATEN.liste : [];
+  $('album-zahl').textContent = `${st.album.size + st.typen.size} / ${liste.length + TYP_INDEX.length}`;
+  const tabs = $('album-tabs');
+  tabs.innerHTML = '';
+  for (const [k, text] of [['modelle', `🚗 Automodelle · ${st.album.size}/${liste.length || '?'}`], ['arten', `🚙 Fahrzeugarten · ${st.typen.size}/${TYP_INDEX.length}`]]) {
+    const b = document.createElement('button');
+    b.className = 'chip' + (albumTab === k ? ' an' : '');
+    b.textContent = text;
+    b.onclick = () => { albumTab = k; renderAlbum(); };
+    tabs.appendChild(b);
+  }
+  // Pro Platz der wertvollste Sticker
+  const bester = (schluessel) => {
+    const m = new Map();
+    for (const s of sticker) { const k = schluessel(s); if (k && (!m.has(k) || m.get(k).wert < s.wert)) m.set(k, s); }
+    return m;
+  };
+  let html = '';
+  if (albumTab === 'modelle') {
+    $('album-info').textContent = 'Spotte ein Auto und lass das Modell von der Profi-KI bestätigen. Dann klebt es hier mit deinem Foto.';
+    if (!liste.length) {
+      html = '<div class="leer"><span class="gross">📶</span>Für die Modell-Liste braucht das Album einmal Internet.</div>';
+    } else {
+      const gefunden = bester(albumName);
+      const marken = [];
+      for (const m of liste) if (!marken.includes(m[0])) marken.push(m[0]);
+      for (const marke of marken) {
+        const modelle = liste.filter(m => m[0] === marke);
+        const hat = modelle.filter(m => gefunden.has(`${m[0]} ${m[1]}`)).length;
+        html += `<div class="album-gruppe">${esc(marke)}${hat === modelle.length ? ' ✅' : ''}<span>${hat} / ${modelle.length}</span></div><div class="album-raster">`
+          + modelle.map(m => albumSlot(m[1], m[3], gefunden.get(`${m[0]} ${m[1]}`), '🚗')).join('') + '</div>';
+      }
+    }
+  } else {
+    $('album-info').textContent = 'Jede Fahrzeugart, die du einmal gespottet hast, klebt hier.';
+    const gefunden = bester(s => s.typ);
+    for (const [g, garage] of Object.entries(GARAGEN)) {
+      const arten = TYP_INDEX.map(i => TYP_NACH_IDX[i]).filter(t => t.garage === g);
+      const hat = arten.filter(t => gefunden.has(t.key)).length;
+      html += `<div class="album-gruppe">${garage.emoji} ${esc(garage.name)}${hat === arten.length ? ' ✅' : ''}<span>${hat} / ${arten.length}</span></div><div class="album-raster">`
+        + arten.map(t => albumSlot(t.name, t.stufe, gefunden.get(t.key), t.emoji)).join('') + '</div>';
+    }
+  }
+  $('album-inhalt').innerHTML = html;
+  $('album-inhalt').querySelectorAll('.slot.hat').forEach(el => { el.onclick = () => stickerDetails(el.dataset.id); });
+}
+
+/* ---------------- Neuigkeiten (einmal nach einem Update) ---------------- */
+function neuigkeitenZeigen() {
+  if (profil.neu === '1.3') return;
+  profil.neu = '1.3';
+  profilSpeichern();
+  dialog(`<div class="d-icon">🎁</div><div class="d-titel">ÜBERRASCHUNG!</div>
+    <div class="d-text links">
+      <p><b>Neu in Vorix Spotter 1.3:</b></p>
+      <p>✨ <b>Holo-Sticker:</b> Manchmal glänzt ein Sticker in Regenbogenfarben. Dann ist er <b>3× so viel wert</b>! Je schärfer dein Foto, desto größer die Chance.</p>
+      <p>📒 <b>Das Album:</b> Sammle alle <b>235 Automodelle</b> und alle <b>75 Fahrzeugarten</b>. Jeder neue Fund klebt dort mit deinem Foto. Schaffst du eine ganze Marke?</p>
+      <p>🎖️ Außerdem warten <b>4 neue Aufnäher</b> auf dich.</p>
+    </div>
+    <div class="d-knoepfe"><button class="panelButton secondary" data-zu>Später</button><button class="panelButton" data-album>📒 Zum Album</button></div>`, o => {
+    o.querySelector('[data-zu]').onclick = () => o.remove();
+    o.querySelector('[data-album]').onclick = () => { o.remove(); albumOeffnen(); };
   });
 }
 
@@ -1735,6 +1879,12 @@ function renderProfil() {
       <div>+ <b>${euro(st.monat)}</b> mit <b>${st.monatAnzahl}</b> ${mehrzahl(st.monatAnzahl, 'Sticker', 'Stickern')}</div>
     </div>
     <div class="karte">
+      <div class="karte-titel">ALBUM & HOLO</div>
+      <div>📒 <b>${st.album.size}</b> Automodelle · <b>${st.typen.size}</b> von ${TYP_INDEX.length} Fahrzeugarten</div>
+      <div>✨ Holo-Sticker: <b>${st.holo}</b></div>
+      <button class="panelButton" id="p-album" style="width:auto;padding:10px 22px">📒 Album öffnen</button>
+    </div>
+    <div class="karte">
       <div class="karte-titel">SELTENHEITEN</div>
       <div class="selt-liste">${SELTENHEIT.map((s, i) => `<span style="--farbe:${s.farbe}">${esc(s.name)}: <b>${st.stufe[i]}</b></span>`).join('')}</div>
     </div>
@@ -1751,6 +1901,7 @@ function renderProfil() {
   $('p-foto').onclick = () => $('p-datei').click();
   $('p-datei').onchange = profilFotoGewaehlt;
   $('p-bearbeiten').onclick = profilBearbeiten;
+  if ($('p-album')) $('p-album').onclick = albumOeffnen;
   if ($('p-anmelden')) $('p-anmelden').onclick = () => kontoDialog(() => { renderProfil(); renderStart(); });
   if ($('p-abmelden')) $('p-abmelden').onclick = async () => {
     const ja = await frage('🔗', 'Abmelden?', 'Du wirst nur hier in Spotter abgemeldet. In Timer Challenge bleibst du angemeldet. Deine Sticker bleiben da.', 'Abmelden', 'Doch nicht');
@@ -1826,7 +1977,7 @@ function menueDialog() {
   dialog(`<div class="m-kopf">☰ MENÜ</div><div class="m-sub">Was möchtest du machen?</div>
     <div class="kacheln">
       <button class="kachel" data-z="profil"><span class="i">👤</span><span class="n">Profil</span><span class="h">Name, Bild, Konto</span></button>
-      <button class="kachel" data-z="garage"><span class="i">🏠</span><span class="n">Garage</span><span class="h">${st.anzahl} Sticker</span></button>
+      <button class="kachel" data-z="album"><span class="i">📒</span><span class="n">Album</span><span class="h">${st.album.size + st.typen.size} Plätze voll</span></button>
       <button class="kachel" data-z="patches"><span class="i">🎖️</span><span class="n">Aufnäher</span><span class="h">${hat} von ${PATCHES.length}</span></button>
       <button class="kachel" data-z="jagd"><span class="i">🎯</span><span class="n">Die Jagd</span><span class="h">Fr–So doppelter Wert</span></button>
       <button class="kachel" data-z="anleitung"><span class="i">❓</span><span class="n">So geht's</span><span class="h">Regeln & Tipps</span></button>
@@ -1837,7 +1988,7 @@ function menueDialog() {
       o.remove();
       const z = b.dataset.z;
       if (z === 'profil') { renderProfil(); zeige('s-profil'); }
-      if (z === 'garage') { renderGarage(); zeige('s-garage'); }
+      if (z === 'album') albumOeffnen();
       if (z === 'patches') { renderPatches(); zeige('s-patches'); }
       if (z === 'jagd') jagdDialog();
       if (z === 'anleitung') anleitungDialog();
@@ -1869,13 +2020,15 @@ function anleitungDialog() {
       <p><b>Deine Daten:</b> Deine Sammlung bleibt auf diesem Gerät. Kein Standort, keine Werbung.</p>
       <p><b>Vorix-Konto:</b> Wenn du willst, meldest du dich im Profil mit deinem Konto von Timer Challenge an. Dann steht dein Name aus Timer Challenge auch in Spotter. Der Vorix-Server prüft dabei nur Name und Passwort. Deine Sticker und Fotos bleiben auf dem Gerät.</p>
       <p><b>🔍 Profi-KI für Autos:</b> Bei Autos sucht eine zweite KI das genaue Modell, zum Beispiel „Porsche 911". Sie kennt über 200 Modelle. Ist sie unsicher, wählst du selbst – und sie kontrolliert, ob deine Wahl passt. Nur was sie bestätigt, macht den Sticker seltener. Schummeln lohnt sich also nicht: Ein nicht bestätigtes Auto gibt nur den halben Wert.</p>
+      <p><b>✨ Holo-Sticker:</b> Ab und zu glänzt ein Sticker in Regenbogenfarben. Er ist dann 3× so viel wert. Mit einem scharfen Foto (viele Sterne) ist die Chance größer.</p>
+      <p><b>📒 Album:</b> Im Menü findest du das Album mit allen 235 Automodellen und 75 Fahrzeugarten. Jeder neue Fund klebt dort mit deinem Foto. Automodelle kommen nur hinein, wenn die Profi-KI sie bestätigt hat.</p>
       <p><b>📖 Steckbrief:</b> Zum erkannten Modell holt die App einen kurzen Text aus Wikipedia. Dabei wird nur der Modellname gesendet, nie dein Foto.</p>
       <p><b>Ehrlich gesagt:</b> Beide KIs sind nicht perfekt und irren sich manchmal. Dann hilft ein Foto aus einem anderen Winkel.</p>
     </div>
     <button class="panelButton" data-ok>Verstanden</button>`, o => { o.querySelector('[data-ok]').onclick = () => o.remove(); }, { menu: true });
 }
 function einstellungenDialog() {
-  dialog(`<div class="m-kopf">⚙️ EINSTELLUNGEN</div><div class="m-sub">Vorix Spotter · Version 1.2</div>
+  dialog(`<div class="m-kopf">⚙️ EINSTELLUNGEN</div><div class="m-sub">Vorix Spotter · Version 1.3</div>
     <button class="eintrag" data-a="profi">${profi ? '🔍 Profi-KI ist bereit ✅' : '🔍 Profi-KI vorab laden'}<small>Erkennt das genaue Automodell. Lädt einmalig etwa 35 MB – am besten im WLAN.</small></button>
     <button class="eintrag" data-a="sound">${profil.sound ? '🔊 Töne: an' : '🔇 Töne: aus'}<small>Tippen zum Umschalten</small></button>
     <button class="eintrag" data-a="sichern">💾 Sicherung speichern<small>Lädt deine ganze Sammlung als Datei herunter</small></button>
@@ -2042,7 +2195,8 @@ document.addEventListener('visibilitychange', () => {
   renderStart();
   zeige('s-start', false);
   await laden;
-  if (!profil.name && !profil.konto) willkommen();
+  if (!profil.name && !profil.konto) { willkommen(); profil.neu = '1.3'; profilSpeichern(); }
+  else neuigkeitenZeigen();   // zeigt einmal, was in der neuen Version dazugekommen ist
   kontoPruefen();   // gilt die Anmeldung mit dem Vorix-Konto noch?
   setTimeout(() => kiLaden().catch(() => {}), 300);  // KI im Hintergrund schon mal laden
   // Web-App: Service Worker anmelden (geht nur im Internet über https, nicht per Doppelklick)
