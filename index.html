@@ -267,6 +267,9 @@ textarea.feld { resize: none; height: 84px; }
 .m-kopf { font-family: var(--orbitron); font-size: 20px; font-weight: 700; text-align: center; margin-bottom: 4px; }
 .m-sub { font-size: 13px; opacity: .6; text-align: center; margin-bottom: 16px; }
 .details { font-size: 15px; opacity: .85; margin: 16px 0 4px; line-height: 1.7; text-align: left; }
+.fehler-text { color: #ff8a9a; font-size: 15px; font-weight: 600; min-height: 20px; margin-top: 8px; }
+.link-knopf { background: none; border: 0; color: var(--c-info); font-size: 15px; font-weight: 600; text-decoration: underline; padding: 4px; }
+.kontoChip { background: linear-gradient(90deg, #0a7d4f, #2fcf78); }
 .toast { position: fixed; left: 50%; bottom: calc(26px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: #182238; border: 1px solid var(--c-accent); border-radius: 14px; padding: 12px 18px; z-index: 8000; font-weight: 700; box-shadow: 0 8px 30px rgba(0,0,0,.5); animation: einblenden .25s ease; max-width: 90vw; text-align: center; }
 </style>
 </head>
@@ -623,6 +626,24 @@ const VERFEHLT = {
   ki:         ['📡', 'KI nicht erreichbar', 'Die KI konnte nicht geladen werden. Ist das Internet an? Dann probier es gleich nochmal.'],
 };
 
+/* ---------------- Vorix-Konto (dasselbe wie bei Timer Challenge) ---------------- */
+// Papa hat am 07.10.2026 erlaubt (Kennung ZC8): Spotter darf sich mit dem Konto von Timer Challenge
+// anmelden und den Namen anzeigen. Spotter speichert NICHTS Neues auf dem Server, die Fotos bleiben auf dem Gerät.
+// WICHTIG – nicht ändern:
+//  - speicherName: Spotter hat seine EIGENE Sitzung. Nie den Sitzungs-Schlüssel von Timer Challenge (sb-…) benutzen,
+//    sonst kann ein Abmelden oder Kontowechsel in Spotter Timer Challenge durcheinanderbringen.
+//  - domain und Namensregel: genau wie in Timer Challenge, sonst passen die Konten nicht zusammen.
+//  - Abmelden nur mit scope 'local'. Ohne das wäre man auch in Timer Challenge abgemeldet, auf allen Geräten.
+//  - Spotter legt keine Konten an und löscht keine. Das macht nur Timer Challenge.
+const KONTO = {
+  url: 'https://ygdgqpedwdpbxlicviks.supabase.co',
+  schluessel: 'sb_publishable_QtZnXFRDB8ypHHmOuY-qLg_MI-52tM5',   // öffentlicher Schlüssel, darf im Code stehen
+  bibliothek: 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2',
+  speicherName: 'vorixSpotterKonto',
+  domain: '@spieler.kronix-timer.app',
+  timerAdresse: 'https://ibralox37.github.io/Timer-/',
+};
+
 /* ---------------- Speicher ---------------- */
 // Profil und Einstellungen liegen im localStorage, die Sticker mit Fotos in der IndexedDB (die hat viel mehr Platz).
 // WICHTIG: Alle Namen beginnen mit „vorixSpotter". Niemals „kronix…" benutzen – das gehört Timer Challenge,
@@ -701,8 +722,10 @@ function profilLaden() {
   return profilBereinigen(p);
 }
 function profilBereinigen(p) {
-  const d = Object.assign({ name: '', bio: '', foto: '', erstellt: Date.now(), patches: {}, jagdSiege: {}, sound: true }, p || {});
+  const d = Object.assign({ name: '', bio: '', foto: '', erstellt: Date.now(), patches: {}, jagdSiege: {}, sound: true, konto: null }, p || {});
   d.name = String(d.name || '').slice(0, 16);
+  if (!d.konto || typeof d.konto !== 'object' || typeof d.konto.id !== 'string' || typeof d.konto.name !== 'string') d.konto = null;
+  else d.konto = { id: d.konto.id.slice(0, 64), name: d.konto.name.slice(0, 20) };
   d.bio = String(d.bio || '').slice(0, 120);
   d.foto = typeof d.foto === 'string' && d.foto.startsWith('data:image/') ? d.foto : '';
   if (typeof d.patches !== 'object' || !d.patches) d.patches = {};
@@ -860,6 +883,114 @@ function jagdInfo(jetzt = new Date()) {
   return { aktiv, id, ziel, tageBis };
 }
 
+/* ---------------- Vorix-Konto: Anmelden und Abmelden ---------------- */
+let sb = null;   // Verbindung zum Vorix-Server. Wird erst geladen, wenn jemand das Konto benutzt.
+async function kontoClient() {
+  if (sb) return sb;
+  if (!window.supabase) await skriptLaden(KONTO.bibliothek);
+  sb = window.supabase.createClient(KONTO.url, KONTO.schluessel, {
+    auth: { storageKey: KONTO.speicherName, persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
+  });
+  return sb;
+}
+function spielerName() { return profil.konto ? profil.konto.name : (profil.name || 'Spotter'); }
+// Genau dieselbe Regel wie in Timer Challenge: Leerzeichen weg, 3–20 Zeichen, dann kleinschreiben + Domain
+function nameGueltig(name) { return /^[a-zA-Z0-9_]{3,20}$/.test(name); }
+function nameZuMail(name) { return name.toLowerCase() + KONTO.domain; }
+
+async function kontoAnmelden(eingabeName, passwort) {
+  const name = String(eingabeName || '').trim();
+  if (!nameGueltig(name)) throw new Error('name');
+  if (String(passwort || '').length < 6) throw new Error('passwort');
+  const c = await kontoClient();
+  const { data, error } = await c.auth.signInWithPassword({ email: nameZuMail(name), password: passwort });
+  if (error) throw error;
+  const id = data.user.id;
+  // Den echten Namen (mit Groß- und Kleinschreibung) aus dem Profil holen und prüfen, ob das Konto gesperrt ist
+  let echterName = name, gesperrt = false, grund = '';
+  try {
+    let antwort = await c.from('profiles').select('username,banned,ban_reason').eq('id', id).maybeSingle();
+    if (antwort.error) antwort = await c.from('profiles').select('username').eq('id', id).maybeSingle();
+    if (antwort.data) {
+      echterName = antwort.data.username || name;
+      gesperrt = antwort.data.banned === true;
+      grund = antwort.data.ban_reason || '';
+    }
+  } catch (e) { /* dann bleibt der eingegebene Name */ }
+  if (gesperrt) {
+    try { await c.auth.signOut({ scope: 'local' }); } catch (e) {}
+    const f = new Error('gesperrt'); f.grund = grund; throw f;
+  }
+  profil.konto = { id, name: String(echterName).slice(0, 20) };
+  if (!profil.name) profil.name = profil.konto.name.slice(0, 16);
+  profilSpeichern();
+}
+async function kontoAbmelden() {
+  try { const c = await kontoClient(); await c.auth.signOut({ scope: 'local' }); } catch (e) { /* offline – egal */ }
+  try { localStorage.removeItem(KONTO.speicherName); } catch (e) {}   // nur UNSERE Sitzung, nie die von Timer Challenge
+  profil.konto = null;
+  profilSpeichern();
+}
+// Beim Start nachsehen, ob die Anmeldung noch gilt. Ohne Internet bleibt der Name einfach stehen.
+async function kontoPruefen() {
+  if (!profil.konto || !navigator.onLine) return;
+  try {
+    const c = await kontoClient();
+    const { data } = await c.auth.getSession();
+    if (!data.session) {
+      profil.konto = null;
+      profilSpeichern();
+      renderStart();
+      toast('🔗 Du wurdest abgemeldet. Im Profil kannst du dich neu anmelden.', 4000);
+    }
+  } catch (e) { /* Server nicht erreichbar – Name bleibt stehen */ }
+}
+function kontoFehlerText(e) {
+  const m = String((e && (e.message || e.code)) || '');
+  if (m === 'name') return 'Der Name hat 3 bis 20 Zeichen: Buchstaben, Zahlen oder _ (so wie bei Timer Challenge).';
+  if (m === 'passwort') return 'Das Passwort hat mindestens 6 Zeichen.';
+  if (m === 'gesperrt') return '⛔ Dieses Konto ist gesperrt.' + (e.grund ? ' Grund: ' + e.grund : '');
+  if (/invalid login credentials|invalid_credentials/i.test(m)) return 'Name oder Passwort stimmt nicht.';
+  if (/fetch|network|load failed|konnte nicht laden/i.test(m)) return 'Keine Verbindung zum Vorix-Server. Ist das Internet an?';
+  return 'Das hat nicht geklappt. Versuch es gleich nochmal.';
+}
+function kontoDialog(beiErfolg) {
+  dialog(`<div class="d-icon">🔑</div><div class="d-titel">VORIX-KONTO</div>
+    <div class="d-text">Melde dich mit deinem Konto von <b>Timer Challenge</b> an. Deine Sticker und Fotos bleiben auf diesem Gerät.</div>
+    <label class="feld-label" for="k-name">BENUTZERNAME</label>
+    <input class="feld" id="k-name" maxlength="20" autocomplete="username" autocapitalize="off" spellcheck="false">
+    <label class="feld-label" for="k-passwort">PASSWORT</label>
+    <input class="feld" id="k-passwort" type="password" autocomplete="current-password">
+    <div class="fehler-text" id="k-fehler"></div>
+    <div class="d-knoepfe"><button class="panelButton secondary" data-ab>Abbrechen</button><button class="panelButton" data-ok>Anmelden</button></div>
+    <div class="d-text" style="font-size:14px;opacity:.75;margin-top:14px">Noch kein Konto? <button class="link-knopf" data-timer>In Timer Challenge erstellen</button></div>`, o => {
+    const name = o.querySelector('#k-name'), pw = o.querySelector('#k-passwort');
+    const fehler = o.querySelector('#k-fehler'), ok = o.querySelector('[data-ok]');
+    const los = async () => {
+      if (ok.disabled) return;
+      fehler.textContent = '';
+      ok.disabled = true; ok.textContent = 'Prüfe …';
+      try {
+        await kontoAnmelden(name.value, pw.value);
+        o.remove();
+        toast(`🔗 Angemeldet als ${profil.konto.name}`);
+        if (beiErfolg) beiErfolg();
+      } catch (e) {
+        console.warn('Anmeldung:', e);
+        fehler.textContent = kontoFehlerText(e);
+      } finally {
+        ok.disabled = false; ok.textContent = 'Anmelden';
+      }
+    };
+    ok.onclick = los;
+    name.addEventListener('keydown', ev => { if (ev.key === 'Enter') pw.focus(); });
+    pw.addEventListener('keydown', ev => { if (ev.key === 'Enter') los(); });
+    o.querySelector('[data-ab]').onclick = () => o.remove();
+    o.querySelector('[data-timer]').onclick = () => window.open(KONTO.timerAdresse, '_blank', 'noopener');
+    setTimeout(() => name.focus(), 300);
+  }, { fest: true });
+}
+
 /* ---------------- Startbildschirm ---------------- */
 function avatarHtml() {
   return profil.foto ? `<img class="avatar-klein" src="${esc(profil.foto)}" alt="">` : '<span class="avatar-klein">👤</span>';
@@ -867,7 +998,7 @@ function avatarHtml() {
 function renderStart() {
   const st = statistik();
   const { rang } = rangFuer(st.summe);
-  $('start-spieler').innerHTML = `${avatarHtml()} <span>${esc(profil.name || 'Spotter')} ·</span>
+  $('start-spieler').innerHTML = `${avatarHtml()} <span>${esc(spielerName())}${profil.konto ? ' 🔗' : ''} ·</span>
     <span class="levelChip vipChip">⭐ VIP</span> ${rangChip(rang)}`;
   $('start-vermoegen').innerHTML = `${euro(st.summe)}<small>💰 VERMÖGEN</small>`;
   const j = jagdInfo();
@@ -1319,10 +1450,18 @@ function renderProfil() {
     <div class="profil-kopf">
       <button class="avatar-gross" id="p-foto" aria-label="Profilbild ändern">${profil.foto ? `<img src="${esc(profil.foto)}" alt="">` : '👤'}</button>
       <div class="avatar-hinweis">Tippe auf das Bild, um es zu ändern</div>
-      <div class="profil-name">${esc(profil.name || 'Spotter')} <span class="levelChip vipChip">⭐ VIP</span></div>
+      <div class="profil-name">${esc(spielerName())} <span class="levelChip vipChip">⭐ VIP</span>${profil.konto ? ' <span class="levelChip kontoChip">🔗 KONTO</span>' : ''}</div>
       <div class="profil-bio">${profil.bio ? esc(profil.bio) : '<i>Noch keine Bio</i>'}</div>
       <button class="panelButton" id="p-bearbeiten" style="width:auto;padding:10px 22px">✏️ Bearbeiten</button>
     </div>
+    ${profil.konto
+      ? `<div class="karte" style="border-color:rgba(47,207,120,.45)"><div class="karte-titel">🔗 VORIX-KONTO</div>
+          <div>Angemeldet als <b>${esc(profil.konto.name)}</b>. Das ist dasselbe Konto wie bei Timer Challenge.</div>
+          <div style="opacity:.65;font-size:14px;margin-top:4px">Deine Sticker und Fotos bleiben auf diesem Gerät.</div>
+          <button class="panelButton secondary" id="p-abmelden">Abmelden</button></div>`
+      : `<div class="karte"><div class="karte-titel">🔑 VORIX-KONTO</div>
+          <div>Spielst du Timer Challenge? Dann melde dich hier mit demselben Konto an.</div>
+          <button class="panelButton" id="p-anmelden">🔑 Mit Vorix-Konto anmelden</button></div>`}
     <div class="karte">
       <div class="karte-titel">RANG</div>
       <div>${rangChip(rang)}</div>
@@ -1355,6 +1494,14 @@ function renderProfil() {
   $('p-foto').onclick = () => $('p-datei').click();
   $('p-datei').onchange = profilFotoGewaehlt;
   $('p-bearbeiten').onclick = profilBearbeiten;
+  if ($('p-anmelden')) $('p-anmelden').onclick = () => kontoDialog(() => { renderProfil(); renderStart(); });
+  if ($('p-abmelden')) $('p-abmelden').onclick = async () => {
+    const ja = await frage('🔗', 'Abmelden?', 'Du wirst nur hier in Spotter abgemeldet. In Timer Challenge bleibst du angemeldet. Deine Sticker bleiben da.', 'Abmelden', 'Doch nicht');
+    if (!ja) return;
+    await kontoAbmelden();
+    renderProfil(); renderStart();
+    toast('Abgemeldet');
+  };
 }
 async function profilFotoGewaehlt(e) {
   const datei = e.target.files && e.target.files[0];
@@ -1372,15 +1519,19 @@ async function profilFotoGewaehlt(e) {
   } catch (err) { toast('⚠️ Das Bild konnte nicht geladen werden.'); }
 }
 function profilBearbeiten() {
+  const ausKonto = !!profil.konto;
   dialog(`<div class="d-titel">PROFIL BEARBEITEN</div>
-    <label class="feld-label" for="d-name">NAME</label><input class="feld" id="d-name" maxlength="16" value="${esc(profil.name)}">
+    <label class="feld-label" for="d-name">NAME</label><input class="feld" id="d-name" maxlength="16" value="${esc(ausKonto ? profil.konto.name : profil.name)}"${ausKonto ? ' disabled' : ''}>
+    ${ausKonto ? '<div class="d-text" style="font-size:14px;opacity:.65;text-align:left;margin-top:4px">Dein Name kommt aus deinem Vorix-Konto.</div>' : ''}
     <label class="feld-label" for="d-bio">BIO</label><textarea class="feld" id="d-bio" maxlength="120" placeholder="z. B. Ich jage Sportwagen in Duisburg">${esc(profil.bio)}</textarea>
     <div class="d-knoepfe"><button class="panelButton secondary" data-ab>Abbrechen</button><button class="panelButton" data-ok>Speichern</button></div>`, o => {
     o.querySelector('[data-ab]').onclick = () => o.remove();
     o.querySelector('[data-ok]').onclick = () => {
-      const n = o.querySelector('#d-name').value.trim();
-      if (!n) { toast('Bitte gib einen Namen ein'); return; }
-      profil.name = n.slice(0, 16);
+      if (!ausKonto) {
+        const n = o.querySelector('#d-name').value.trim();
+        if (!n) { toast('Bitte gib einen Namen ein'); return; }
+        profil.name = n.slice(0, 16);
+      }
       profil.bio = o.querySelector('#d-bio').value.trim().slice(0, 120);
       profilSpeichern();
       o.remove();
@@ -1417,7 +1568,7 @@ function menueDialog() {
   const hat = PATCHES.filter(p => profil.patches[p.id]).length;
   dialog(`<div class="m-kopf">☰ MENÜ</div><div class="m-sub">Was möchtest du machen?</div>
     <div class="kacheln">
-      <button class="kachel" data-z="profil"><span class="i">👤</span><span class="n">Profil</span><span class="h">Name, Bild, Rang</span></button>
+      <button class="kachel" data-z="profil"><span class="i">👤</span><span class="n">Profil</span><span class="h">Name, Bild, Konto</span></button>
       <button class="kachel" data-z="garage"><span class="i">🏠</span><span class="n">Garage</span><span class="h">${st.anzahl} Sticker</span></button>
       <button class="kachel" data-z="patches"><span class="i">🎖️</span><span class="n">Aufnäher</span><span class="h">${hat} von ${PATCHES.length}</span></button>
       <button class="kachel" data-z="jagd"><span class="i">🎯</span><span class="n">Die Jagd</span><span class="h">Fr–So doppelter Wert</span></button>
@@ -1458,17 +1609,18 @@ function anleitungDialog() {
       <p>5. <b>Ränge:</b> Mit mehr Vermögen steigst du auf – von 🔰 Rookie bis 👑 Legende.</p>
       <p><b>Seltenheiten:</b> ${SELTENHEIT.map(s => `<span style="color:${s.farbe};font-weight:700">${esc(s.name)}</span>`).join(' · ')}</p>
       <p><b>Fair bleiben:</b> Nur echte Fahrzeuge zählen. Fotos vom Bildschirm lehnt die App ab. Unscharfe Fotos kosten dich nichts – einfach nochmal.</p>
-      <p><b>Deine Daten:</b> Alles bleibt auf diesem Gerät. Kein Konto, kein Standort, keine Werbung.</p>
+      <p><b>Deine Daten:</b> Deine Sammlung bleibt auf diesem Gerät. Kein Standort, keine Werbung.</p>
+      <p><b>Vorix-Konto:</b> Wenn du willst, meldest du dich im Profil mit deinem Konto von Timer Challenge an. Dann steht dein Name aus Timer Challenge auch in Spotter. Der Vorix-Server prüft dabei nur Name und Passwort. Deine Sticker und Fotos bleiben auf dem Gerät.</p>
       <p><b>Ehrlich gesagt:</b> Die KI ist nicht perfekt und irrt sich manchmal. Dann hilft ein Foto aus einem anderen Winkel.</p>
     </div>
     <button class="panelButton" data-ok>Verstanden</button>`, o => { o.querySelector('[data-ok]').onclick = () => o.remove(); }, { menu: true });
 }
 function einstellungenDialog() {
-  dialog(`<div class="m-kopf">⚙️ EINSTELLUNGEN</div><div class="m-sub">Vorix Spotter · Version 1.0</div>
+  dialog(`<div class="m-kopf">⚙️ EINSTELLUNGEN</div><div class="m-sub">Vorix Spotter · Version 1.1</div>
     <button class="eintrag" data-a="sound">${profil.sound ? '🔊 Töne: an' : '🔇 Töne: aus'}<small>Tippen zum Umschalten</small></button>
     <button class="eintrag" data-a="sichern">💾 Sicherung speichern<small>Lädt deine ganze Sammlung als Datei herunter</small></button>
     <button class="eintrag" data-a="laden">📂 Sicherung laden<small>Holt eine gespeicherte Sammlung zurück</small></button>
-    <button class="eintrag danger" data-a="loeschen">🗑️ Alles löschen<small>Sticker, Profil und Aufnäher</small></button>
+    <button class="eintrag danger" data-a="loeschen">🗑️ Alles löschen<small>Sticker, Profil und Aufnäher. Dein Vorix-Konto bleibt bestehen.</small></button>
     <div class="d-text links" style="font-size:14px;margin-top:12px;opacity:.65">📱 <b>Als App aufs Handy:</b> iPhone: in Safari auf „Teilen" → „Zum Home-Bildschirm". Android: in Chrome auf ⋮ → „App installieren".</div>
     <div class="d-text links" style="font-size:14px;margin-top:12px;opacity:.65">Deine Sammlung liegt nur in diesem Browser. Mach ab und zu eine Sicherung, damit nichts verloren geht.</div>
     <button class="panelButton secondary" data-a="zu" style="margin-top:14px">Schließen</button>
@@ -1484,6 +1636,7 @@ function einstellungenDialog() {
         if (!ja) return;
         const ganzSicher = await frage('🛑', 'Ganz sicher?', 'Letzte Chance: Wirklich alles weg?', 'Ja, löschen', 'Nein', true);
         if (!ganzSicher) return;
+        if (profil.konto) await kontoAbmelden();   // nur hier abmelden – das Konto selbst bleibt bestehen
         await Speicher.leeren();
         localStorage.removeItem(LS_PROFIL);
         location.reload();
@@ -1539,8 +1692,11 @@ function willkommen() {
     <div class="d-text">Fotografiere echte Fahrzeuge, sammle Sticker und werde zur Legende. VIP ist bei dir <b>gratis</b> – für immer.</div>
     <label class="feld-label" for="d-start-name">WIE HEISST DU?</label>
     <input class="feld" id="d-start-name" maxlength="16" placeholder="Dein Spielername" autocomplete="off">
-    <div class="d-text" style="font-size:14px;opacity:.6;margin-top:10px">Alles bleibt auf diesem Gerät. Kein Konto, keine E-Mail.</div>
-    <button class="startBtn play" data-ok style="width:100%;margin-top:16px">LOS GEHT'S</button>`, o => {
+    <div class="d-text" style="font-size:14px;opacity:.6;margin-top:10px">Deine Sammlung bleibt auf diesem Gerät. Ein Konto brauchst du nicht.</div>
+    <button class="startBtn play" data-ok style="width:100%;margin-top:16px">LOS GEHT'S</button>
+    <div class="d-text" style="font-size:14px;opacity:.75;margin-top:16px">Spielst du schon Timer Challenge?</div>
+    <button class="startBtn sub" data-konto style="width:100%;margin-top:8px">🔑 MIT VORIX-KONTO ANMELDEN</button>`, o => {
+    o.querySelector('[data-konto]').onclick = () => kontoDialog(() => { o.remove(); renderStart(); });
     const feld = o.querySelector('#d-start-name');
     const fertig = () => {
       const n = feld.value.trim();
@@ -1618,7 +1774,8 @@ document.addEventListener('visibilitychange', () => {
   renderStart();
   zeige('s-start', false);
   await laden;
-  if (!profil.name) willkommen();
+  if (!profil.name && !profil.konto) willkommen();
+  kontoPruefen();   // gilt die Anmeldung mit dem Vorix-Konto noch?
   setTimeout(() => kiLaden().catch(() => {}), 300);  // KI im Hintergrund schon mal laden
   // Web-App: Service Worker anmelden (geht nur im Internet über https, nicht per Doppelklick)
   const testRechner = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
