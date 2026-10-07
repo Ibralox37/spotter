@@ -9,7 +9,7 @@
    (Name beginnt mit "vorix-spotter-"). Fremde Speicher werden nie angefasst.
    ===================================================================== */
 
-const SPIEL = 'vorix-spotter-spiel-3';   // bei jeder neuen Version die Zahl erhöhen (3 = Profi-KI, 07.10.2026)
+const SPIEL = 'vorix-spotter-spiel-4';   // bei jeder neuen Version die Zahl erhöhen (4 = Holo + Album, 07.10.2026)
 const KI = 'vorix-spotter-ki-1';         // die KI-Dateien (MobileNet, Bibliotheken), nur bei KI-Wechsel erhöhen
 const DATEIEN = ['./', './index.html', './manifest.json', './vorix-logo-hell.png',
   './favicon.png', './icon-192.png', './icon-512.png', './apple-touch-icon.png', './profi-ki.js'];
