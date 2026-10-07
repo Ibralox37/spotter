@@ -270,6 +270,17 @@ textarea.feld { resize: none; height: 84px; }
 .fehler-text { color: #ff8a9a; font-size: 15px; font-weight: 600; min-height: 20px; margin-top: 8px; }
 .link-knopf { background: none; border: 0; color: var(--c-info); font-size: 15px; font-weight: 600; text-decoration: underline; padding: 4px; }
 .kontoChip { background: linear-gradient(90deg, #0a7d4f, #2fcf78); }
+.urteil { margin-top: 8px; padding: 9px 12px; border-radius: 11px; font-weight: 700; font-size: 15px; line-height: 1.35; }
+.urteil.ok { background: rgba(47,207,120,.16); color: #7dffb6; }
+.urteil.mittel { background: rgba(255,210,74,.14); color: #ffe08a; }
+.urteil.nein { background: rgba(255,77,109,.14); color: #ffb3c1; }
+.steckbrief { margin-top: 10px; font-size: 14px; line-height: 1.45; opacity: .85; }
+.steckbrief a { color: var(--c-info); }
+.profi-knoepfe { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.sticker .pruef { font-size: 13px; font-weight: 700; margin-top: 2px; }
+.sticker .pruef.ok { color: #12a05a; }
+.sticker .pruef.mittel { color: #b8860b; }
+.sticker .pruef.nein { color: #8d9bb0; }
 .toast { position: fixed; left: 50%; bottom: calc(26px + env(safe-area-inset-bottom)); transform: translateX(-50%); background: #182238; border: 1px solid var(--c-accent); border-radius: 14px; padding: 12px 18px; z-index: 8000; font-weight: 700; box-shadow: 0 8px 30px rgba(0,0,0,.5); animation: einblenden .25s ease; max-width: 90vw; text-align: center; }
 </style>
 </head>
@@ -347,6 +358,10 @@ textarea.feld { resize: none; height: 84px; }
     <div class="ki-typ" id="erg-typ"></div>
     <div class="ki-info" id="erg-info"></div>
     <div id="erg-alt-box"><div class="karte-titel" style="margin-top:14px">ODER IST ES …?</div><div class="chips" id="erg-alt"></div></div>
+  </div>
+  <div class="karte versteckt" id="profi-box" style="border-color:rgba(0,170,255,.35)">
+    <div class="karte-titel">🔍 PROFI-KI · GENAUES MODELL</div>
+    <div id="profi-inhalt"></div>
   </div>
   <div class="karte" id="marken-box">
     <div class="karte-titel">🏷️ WELCHE MARKE?</div>
@@ -713,6 +728,11 @@ function bereinigen(liste) {
       sicher: Math.max(0, Math.min(100, Math.round(+s.sicher) || 0)),
       ts: +s.ts || Date.now(),
       jagd: !!s.jagd,
+      geprueft: ['modell', 'marke', 'nein'].includes(s.geprueft) ? s.geprueft : '',
+      wiki: s.wiki && typeof s.wiki === 'object' && typeof s.wiki.text === 'string'
+        ? { titel: String(s.wiki.titel || '').slice(0, 80), text: s.wiki.text.slice(0, 300),
+            url: typeof s.wiki.url === 'string' && s.wiki.url.startsWith('https://de.wikipedia.org/') ? s.wiki.url : '' }
+        : null,
     }));
 }
 
@@ -1017,11 +1037,11 @@ function renderStart() {
 }
 
 /* ---------------- KI laden ---------------- */
-function skriptLaden(src) {
+function skriptLaden(src, fremd = true) {
   return new Promise((ok, fehler) => {
     const s = document.createElement('script');
     s.src = src; s.async = true;
-    s.crossOrigin = 'anonymous';   // damit der Service Worker die KI für offline speichern darf
+    if (fremd) s.crossOrigin = 'anonymous';   // damit der Service Worker die KI für offline speichern darf
     s.onload = ok; s.onerror = () => fehler(new Error('Konnte nicht laden: ' + src));
     document.head.appendChild(s);
   });
@@ -1200,6 +1220,193 @@ function verfehlt(art) {
   });
 }
 
+/* ---------------- Profi-KI: erkennt das genaue Automodell ---------------- */
+// Die Profi-KI ist „MobileCLIP-S0" (von Apple, über Hugging Face). Sie läuft direkt im Browser,
+// das Foto verlässt das Gerät nie. Ihr Auto-Wissen über 235 Modelle steht in profi-ki.js
+// (am 07.10.2026 einmal vorberechnet). Getestet mit 15 bekannten Autos: 10 sofort richtig,
+// 13 unter den ersten drei. Für den Steckbrief wird NUR der Modellname bei Wikipedia nachgeschlagen.
+const PROFI = {
+  bibliothek: 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1',
+  modell: 'Xenova/mobileclip_s0',
+  daten: 'profi-ki.js',
+  sicher: 0.5,      // ab hier nimmt die KI das Modell von selbst
+  bestaetigt: 0.05, // ab hier bestätigt die KI ein selbst gewähltes Modell
+  markeOk: 0.25,    // ab hier passt wenigstens die Marke
+};
+let profi = null, profiVersprechen = null;
+function profiLaden(fortschritt) {
+  if (profiVersprechen) return profiVersprechen;
+  profiVersprechen = (async () => {
+    if (!window.PROFI_DATEN) await skriptLaden(PROFI.daten, false);
+    const T = await import(PROFI.bibliothek);
+    T.env.allowLocalModels = false;
+    const processor = await T.AutoProcessor.from_pretrained(PROFI.modell);
+    const vision = await T.CLIPVisionModelWithProjection.from_pretrained(PROFI.modell, { dtype: 'fp16', progress_callback: fortschritt });
+    // Das gespeicherte Auto-Wissen auspacken (pro Modell ein Zahlen-Vektor)
+    const d = window.PROFI_DATEN;
+    const roh = Uint8Array.from(atob(d.daten), z => z.charCodeAt(0));
+    const q = new Int8Array(roh.buffer);
+    const vektoren = d.liste.map((_, i) => {
+      const v = new Float32Array(d.dim); let n = 0;
+      for (let k = 0; k < d.dim; k++) { v[k] = q[i * d.dim + k] * d.skala[i]; n += v[k] * v[k]; }
+      n = Math.sqrt(n);
+      for (let k = 0; k < d.dim; k++) v[k] /= n;
+      return v;
+    });
+    profi = { T, processor, vision, liste: d.liste, vektoren };
+    return profi;
+  })().catch(e => { profiVersprechen = null; throw e; });
+  return profiVersprechen;
+}
+// Gibt für jedes Modell aus der Liste die Wahrscheinlichkeit zurück
+async function profiErkennen(dataUrl) {
+  const bild = await profi.T.RawImage.fromURL(dataUrl);
+  const { image_embeds } = await profi.vision(await profi.processor(bild));
+  const e = image_embeds.normalize().tolist()[0];
+  const logits = profi.vektoren.map(v => { let s = 0; for (let k = 0; k < v.length; k++) s += v[k] * e[k]; return 100 * s; });
+  const max = Math.max(...logits);
+  const ex = logits.map(x => Math.exp(x - max));
+  const summe = ex.reduce((a, b) => a + b, 0);
+  return ex.map(x => x / summe);
+}
+function profiName(i) { const m = profi.liste[i]; return `${m[0]} ${m[1]}`; }
+function markenSumme(probs, marke) { return probs.reduce((a, v, i) => a + (profi.liste[i][0] === marke ? v : 0), 0); }
+// Prüft eine selbst gewählte Antwort: 'modell' = passt, 'marke' = nur die Marke passt, 'nein' = passt nicht
+function profiPruefen(probs, idx) {
+  if (probs[idx] >= PROFI.bestaetigt) return 'modell';
+  return markenSumme(probs, profi.liste[idx][0]) >= PROFI.markeOk ? 'marke' : 'nein';
+}
+function profiMarkePruefen(probs, marke) { return markenSumme(probs, marke) >= PROFI.markeOk ? 'marke' : 'nein'; }
+
+// Steckbrief aus dem Internet (Wikipedia). Es wird nur der Modellname gesendet, kein Foto.
+async function steckbriefHolen(marke, modell) {
+  if (!navigator.onLine) return null;
+  try {
+    const such = await (await fetch('https://de.wikipedia.org/w/rest.php/v1/search/title?q=' + encodeURIComponent(marke + ' ' + modell) + '&limit=1')).json();
+    const seite = such && such.pages && such.pages[0];
+    if (!seite) return null;
+    const s = await (await fetch('https://de.wikipedia.org/api/rest_v1/page/summary/' + encodeURIComponent(seite.key))).json();
+    if (!s || !s.extract || s.type === 'disambiguation') return null;
+    const saetze = (s.extract.match(/[^.!?]+[.!?]+/g) || [s.extract]).slice(0, 2).join('').trim();
+    return { titel: String(s.title || seite.title || '').slice(0, 80), text: saetze.slice(0, 280), url: 'https://de.wikipedia.org/wiki/' + encodeURIComponent(seite.key) };
+  } catch (e) { return null; }
+}
+function steckbriefLaden() {
+  if (fang.profiWahl == null) { fang.wiki = null; return; }
+  const wahl = fang.profiWahl, meinFang = fang, m = profi.liste[wahl];
+  fang.wiki = 'laedt';
+  steckbriefHolen(m[0], m[1]).then(w => {
+    if (meinFang.profiWahl !== wahl) return;
+    meinFang.wiki = w;
+    if (fang === meinFang) profiRender();
+  });
+}
+// Ein Modell übernehmen (von der KI vorgeschlagen oder selbst gewählt)
+function profiWaehlen(idx, vonKi) {
+  const m = profi.liste[idx];
+  fang.profiWahl = idx;
+  fang.profiAuto = !!vonKi;
+  fang.pruefung = vonKi ? 'modell' : profiPruefen(fang.profi.probs, idx);
+  fang.profiSuche = false;
+  fang.profiModus = null;
+  fang.marke = m[0];
+  $('erg-modell').value = m[1];
+  steckbriefLaden();
+  typAnzeigen();
+}
+async function profiStarten() {
+  if (fang.profi) { profiRender(); return; }
+  const meinFang = fang;
+  fang.profi = { status: 'laden', prozent: 3, text: profi ? 'Profi-KI sucht das genaue Modell …' : 'Profi-KI lädt … (nur beim ersten Mal, etwa 35 MB – am besten im WLAN)' };
+  profiRender();
+  try {
+    await profiLaden(ev => {
+      if (!ev || ev.status !== 'progress' || !/onnx/.test(ev.file || '') || !meinFang.profi || meinFang.profi.status !== 'laden') return;
+      meinFang.profi.prozent = Math.max(3, Math.round(ev.progress || 0));
+      meinFang.profi.text = `Profi-KI lädt … ${meinFang.profi.prozent} % (nur beim ersten Mal, am besten im WLAN)`;
+      if (fang === meinFang) profiRender();
+    });
+    if (fang !== meinFang) return;
+    fang.profi.text = 'Profi-KI sucht das genaue Modell …';
+    fang.profi.prozent = 100;
+    profiRender();
+    const probs = await profiErkennen(fang.dataUrl);
+    if (fang !== meinFang) return;
+    const top = [...probs.keys()].sort((a, b) => probs[b] - probs[a]).slice(0, 3);
+    fang.profi = { status: 'fertig', probs, top };
+    if (probs[top[0]] >= PROFI.sicher) profiWaehlen(top[0], true);
+    else typAnzeigen();
+  } catch (e) {
+    console.warn('Profi-KI:', e);
+    if (fang !== meinFang) return;
+    fang.profi = { status: 'fehler', text: 'Die Profi-KI ist gerade nicht erreichbar. Wähle die Marke unten selbst – ohne Prüfung zählt sie aber nicht für die Seltenheit.' };
+    typAnzeigen();
+  }
+}
+function urteilHtml() {
+  const pr = fang.profi;
+  if (fang.pruefung === 'modell') {
+    return fang.profiAuto
+      ? `<div class="urteil ok">🤖 Die KI ist sich zu ${Math.round(pr.probs[fang.profiWahl] * 100)} % sicher.</div>`
+      : '<div class="urteil ok">✅ Die KI bestätigt: Das passt!</div>';
+  }
+  if (fang.pruefung === 'marke') return '<div class="urteil mittel">🟡 Die Marke passt. Beim genauen Modell ist sich die KI nicht sicher.</div>';
+  if (fang.pruefung === 'nein') return `<div class="urteil nein">❌ Die KI glaubt das nicht. Sie tippt eher auf ${esc(profiName(pr.top[0]))}. So gibt es nur den halben Wert.</div>`;
+  return '';
+}
+function profiRender() {
+  const box = $('profi-inhalt');
+  const pr = fang && fang.profi;
+  if (!box || !pr) return;
+  if (pr.status === 'laden') {
+    box.innerHTML = `<div class="ki-info">${esc(pr.text)}</div><div class="balken"><div style="width:${pr.prozent}%"></div></div>`;
+    return;
+  }
+  if (pr.status === 'fehler') { box.innerHTML = `<div class="ki-info">⚠️ ${esc(pr.text)}</div>`; return; }
+  if (fang.profiSuche) {
+    box.innerHTML = `<div class="ki-info">Such das Modell. Die KI prüft dann, ob es passt.</div>
+      <input class="feld" id="profi-suche" type="search" placeholder="z. B. Golf, 911, Model 3 …" autocomplete="off" style="margin-top:8px">
+      <div class="chips marken" id="profi-liste"></div>
+      <div class="profi-knoepfe"><button class="link-knopf" data-p="zurueck">↩ Zurück</button><button class="link-knopf" data-p="marke">Modell nicht dabei? Nur die Marke wählen</button></div>`;
+    const feld = $('profi-suche');
+    feld.oninput = profiListeZeigen;
+    profiListeZeigen();
+    setTimeout(() => feld.focus(), 100);
+  } else if (fang.profiModus === 'marke') {
+    let urteil = '<div class="ki-info">Wähle unten die Marke. Die KI prüft, ob sie passt.</div>';
+    if (fang.marke && fang.pruefung === 'marke') urteil = `<div class="urteil ok">✅ Die KI bestätigt: ${esc(fang.marke)} passt!</div>`;
+    else if (fang.marke && fang.pruefung === 'nein') urteil = `<div class="urteil nein">❌ Die KI glaubt nicht, dass das ein ${esc(fang.marke)} ist. Sie tippt eher auf ${esc(profiName(pr.top[0]))}. So gibt es nur den halben Wert.</div>`;
+    box.innerHTML = urteil + '<div class="profi-knoepfe"><button class="link-knopf" data-p="zurueck">↩ Zurück zur Modell-Auswahl</button></div>';
+  } else if (fang.profiWahl != null) {
+    let wiki = '';
+    if (fang.wiki === 'laedt') wiki = '<div class="steckbrief">📖 Suche den Steckbrief im Internet …</div>';
+    else if (fang.wiki) wiki = `<div class="steckbrief">📖 <b>${esc(fang.wiki.titel)}:</b> ${esc(fang.wiki.text)} <a href="${esc(fang.wiki.url)}" target="_blank" rel="noopener">Wikipedia</a></div>`;
+    box.innerHTML = `<div class="ki-typ">🚗 ${esc(profiName(fang.profiWahl))}</div>${urteilHtml()}${wiki}
+      <div class="profi-knoepfe"><button class="chip" data-p="suchen">🔎 Anderes Modell</button><button class="chip" data-p="marke">🏷️ Nur Marke</button></div>`;
+  } else {
+    box.innerHTML = `<div class="ki-info">Die KI ist sich nicht ganz sicher. Ist es …?</div>
+      <div class="chips">${pr.top.map(i => `<button class="chip" data-wahl="${i}">${esc(profiName(i))} · ${Math.round(pr.probs[i] * 100)} %</button>`).join('')}</div>
+      <div class="profi-knoepfe"><button class="chip" data-p="suchen">🔎 Anderes Modell suchen</button><button class="chip" data-p="marke">🏷️ Nur Marke</button></div>`;
+  }
+  box.querySelectorAll('[data-wahl]').forEach(b => b.onclick = () => profiWaehlen(+b.dataset.wahl, false));
+  box.querySelectorAll('[data-p]').forEach(b => b.onclick = () => {
+    const a = b.dataset.p;
+    if (a === 'suchen') { fang.profiSuche = true; fang.profiModus = null; }
+    if (a === 'zurueck') { fang.profiSuche = false; fang.profiModus = null; }
+    if (a === 'marke') { fang.profiSuche = false; fang.profiModus = 'marke'; fang.profiWahl = null; fang.pruefung = null; fang.marke = null; fang.wiki = null; $('erg-modell').value = ''; }
+    typAnzeigen();
+  });
+}
+function profiListeZeigen() {
+  const such = ($('profi-suche') ? $('profi-suche').value : '').trim().toLowerCase();
+  const box = $('profi-liste');
+  const treffer = profi.liste.map((m, i) => i).filter(i => !such || profiName(i).toLowerCase().includes(such));
+  box.innerHTML = treffer.slice(0, 40).map(i => `<button class="chip" data-wahl="${i}">${esc(profiName(i))}</button>`).join('')
+    + (treffer.length > 40 ? `<div class="ki-info" style="width:100%">… und ${treffer.length - 40} weitere. Tipp weiter, um zu suchen.</div>` : '')
+    + (!treffer.length ? '<div class="ki-info">Nichts gefunden. Wähle sonst nur die Marke.</div>' : '');
+  box.querySelectorAll('[data-wahl]').forEach(b => b.onclick = () => profiWaehlen(+b.dataset.wahl, false));
+}
+
 /* ---------------- Ergebnis & Marke ---------------- */
 function ergebnisZeigen() {
   zeige('s-ergebnis');
@@ -1220,15 +1427,29 @@ function typAnzeigen() {
     const b = document.createElement('button');
     b.className = 'chip' + (i === fang.wahl ? ' an' : '');
     b.textContent = `${v.emoji} ${v.name}`;
-    b.onclick = () => { fang.wahl = i; fang.marke = null; $('marken-suche').value = ''; typAnzeigen(); };
+    b.onclick = () => {
+      const vorher = fang.vorschlaege[fang.wahl];
+      fang.wahl = i;
+      // Bleibt es ein Auto, bleibt auch das erkannte Modell. Sonst fängt die Auswahl neu an.
+      if (!(vorher.garage === 'autos' && v.garage === 'autos')) {
+        fang.marke = null; fang.profiWahl = null; fang.pruefung = null; fang.profiModus = null; fang.profiSuche = false; fang.wiki = null;
+        $('erg-modell').value = '';
+      }
+      $('marken-suche').value = '';
+      typAnzeigen();
+    };
     alt.appendChild(b);
   });
   $('erg-alt-box').classList.toggle('versteckt', fang.vorschlaege.length < 2);
   const hatMarken = !!t.marken;
-  $('marken-box').classList.toggle('versteckt', !hatMarken);
+  const istAuto = t.garage === 'autos';
+  $('profi-box').classList.toggle('versteckt', !istAuto);
+  const profiStatus = fang.profi ? fang.profi.status : 'laden';
+  $('marken-box').classList.toggle('versteckt', !(hatMarken && (!istAuto || fang.profiModus === 'marke' || profiStatus === 'fehler')));
   $('modell-label').textContent = hatMarken ? 'MODELL (FREIWILLIG)' : (t.garage === 'boote' ? 'NAME DES SCHIFFS (FREIWILLIG)' : 'NAME (FREIWILLIG)');
   $('erg-modell').placeholder = hatMarken ? beispielModell(t.marken) : (t.garage === 'boote' ? 'steht oft am Rumpf' : 'z. B. ein Spitzname');
   markenZeigen();
+  if (istAuto) profiStarten();
 }
 function beispielModell(gruppe) {
   return { auto: 'z. B. 911 Turbo', motorrad: 'z. B. R 1250 GS', flugzeug: 'z. B. A320', zug: 'z. B. ICE 4', lkw: 'z. B. Actros',
@@ -1245,7 +1466,16 @@ function markenZeigen() {
     const b = document.createElement('button');
     b.className = 'chip' + (fang.marke === wert ? ' an' : '');
     b.textContent = text;
-    b.onclick = () => { fang.marke = wert; markenZeigen(); };
+    b.onclick = () => {
+      fang.marke = wert;
+      // Bei Autos prüft die Profi-KI, ob die Marke zum Foto passt
+      if (t.garage === 'autos' && fang.profi && fang.profi.status === 'fertig') {
+        fang.profiWahl = null; fang.wiki = null;
+        fang.pruefung = wert ? profiMarkePruefen(fang.profi.probs, wert) : null;
+        profiRender();
+      }
+      markenZeigen();
+    };
     box.appendChild(b);
   };
   knopf('🤷 Weiß ich nicht', null);
@@ -1264,9 +1494,9 @@ function sterneBerechnen(sicher, schaerfe) {
   return Math.max(1, Math.min(5, Math.round(1 + sicher * 3 + scharf)));
 }
 // Gleiche Art + gleiche Marke ergibt ungefähr den gleichen Wert. Sterne und die Jagd machen ihn höher.
-function wertBerechnen(t, marke, selt, sterne, istJagd) {
+function wertBerechnen(t, marke, selt, sterne, istJagd, modell = '') {
   const [von, bis] = SELTENHEIT[selt].wert;
-  const anteil = marke ? (hash(t.key + '|' + marke) % 10007) / 10007 : Math.random() * 0.6;
+  const anteil = marke ? (hash(t.key + '|' + marke + '|' + modell.toLowerCase()) % 10007) / 10007 : Math.random() * 0.6;
   const wackeln = 0.9 + Math.random() * 0.2;
   const w = (von + (bis - von) * anteil) * wackeln * GARAGEN[t.garage].faktor * (0.8 + sterne * 0.1) * (istJagd ? 2 : 1);
   return Math.max(100, Math.round(w / 100) * 100);
@@ -1277,19 +1507,41 @@ async function stickerErstellen() {
   knopf.disabled = true;
   try {
     const t = fang.vorschlaege[fang.wahl];
-    const markenStufe = fang.marke && t.marken ? MARKEN[t.marken][fang.marke] : null;
-    const selt = seltenheitBerechnen(t.stufe, markenStufe);
+    const istAuto = t.garage === 'autos';
+    const pr = fang.profi && fang.profi.status === 'fertig' ? fang.profi : null;
+    let marke = fang.marke || '', selt, faktor = 1, geprueft = '', listenModell = '';
+    if (istAuto) {
+      // Bei Autos zählt eine Marke oder ein Modell nur, wenn die Profi-KI es bestätigt hat
+      if (pr && fang.profiWahl != null) {
+        const m = profi.liste[fang.profiWahl];
+        marke = m[0]; listenModell = m[1];
+        geprueft = fang.pruefung || 'nein';
+        if (geprueft === 'modell') selt = t.stufe === 5 ? 5 : m[3];
+        else if (geprueft === 'marke') selt = seltenheitBerechnen(t.stufe, MARKEN.auto[m[0]]);
+        else { selt = t.stufe; faktor = 0.5; }
+      } else if (pr && marke) {
+        geprueft = profiMarkePruefen(pr.probs, marke);
+        if (geprueft === 'marke') selt = seltenheitBerechnen(t.stufe, MARKEN.auto[marke]);
+        else { selt = t.stufe; faktor = 0.5; }
+      } else {
+        selt = t.stufe;   // ohne Prüfung zählt die Marke nicht für die Seltenheit
+      }
+    } else {
+      const markenStufe = marke && t.marken ? MARKEN[t.marken][marke] : null;
+      selt = seltenheitBerechnen(t.stufe, markenStufe);
+    }
     const sterne = sterneBerechnen(t.p, fang.schaerfe);
     const j = jagdInfo();
     const istJagd = j.aktiv && j.ziel.key === t.key;
-    const wert = wertBerechnen(t, fang.marke, selt, sterne, istJagd);
+    const wert = Math.max(100, Math.round(wertBerechnen(t, marke, selt, sterne, istJagd, listenModell) * faktor / 100) * 100);
     const rangVorher = rangFuer(statistik().summe).rang;
     const blob = await new Promise(ok => fang.canvas.toBlob(ok, 'image/jpeg', 0.85));
     if (!blob) throw new Error('Bild konnte nicht gespeichert werden');
     const s = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
-      ts: Date.now(), typ: t.key, garage: t.garage, marke: fang.marke || '', modell: $('erg-modell').value.trim().slice(0, 30),
+      ts: Date.now(), typ: t.key, garage: t.garage, marke, modell: $('erg-modell').value.trim().slice(0, 30),
       seltenheit: selt, sterne, wert, sicher: Math.round(t.p * 100), jagd: istJagd, bild: blob,
+      geprueft, wiki: fang.wiki && typeof fang.wiki === 'object' ? fang.wiki : null,
     };
     await Speicher.speichern(s);
     sticker.push(s);
@@ -1333,6 +1585,9 @@ function stickerHtml(s) {
     <div class="bild"><img src="${esc(bildSrc(s))}" alt=""></div>
     <div class="name">${esc(stickerName(s))}</div>
     <div class="typ">${t.emoji} ${esc(t.name)} · ${GARAGEN[s.garage].emoji} ${esc(GARAGEN[s.garage].name)}</div>
+    ${s.geprueft === 'modell' ? '<div class="pruef ok">✔ Modell von der KI geprüft</div>'
+      : s.geprueft === 'marke' ? '<div class="pruef mittel">✔ Marke von der KI geprüft</div>'
+      : s.geprueft === 'nein' ? '<div class="pruef nein">❔ Nicht bestätigt · halber Wert</div>' : ''}
     <div class="sterne">${'★'.repeat(s.sterne)}${'☆'.repeat(5 - s.sterne)}</div>
     <div class="wert">${euro(s.wert)}</div>
   </div>`;
@@ -1348,6 +1603,7 @@ function revealZeigen(s, info) {
   let nr = 0;
   if (info.istJagd) melde('🎯 Jagd-Bonus: doppelter Wert!', true, nr++);
   if (info.neuerJagdSieg) melde('🏆 Du hast das Ziel dieser Jagd gefunden!', true, nr++);
+  if (s.wiki) melde(`📖 Wusstest du? ${s.wiki.text}`, false, nr++);
   if (info.rangNeu) melde(`⬆️ Neuer Rang: ${info.rangNeu.emoji} ${info.rangNeu.name}`, true, nr++);
   for (const pa of info.neuePatches) melde(`🎖️ Neuer Aufnäher: ${pa.emoji} ${pa.name}`, true, nr++);
   tonReveal(s.seltenheit);
@@ -1423,6 +1679,7 @@ function stickerDetails(id) {
       📅 Gespottet am <b>${d.toLocaleDateString('de-DE')}</b> um <b>${d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}</b><br>
       🤖 KI: <b>${esc(t.name)}</b> (${s.sicher} % sicher)<br>
       🏷️ Marke: <b>${esc(s.marke || 'unbekannt')}</b>${s.modell ? ` · ${esc(s.modell)}` : ''}
+      ${s.wiki ? `<br>📖 <b>${esc(s.wiki.titel)}:</b> ${esc(s.wiki.text)} ${s.wiki.url ? `<a href="${esc(s.wiki.url)}" target="_blank" rel="noopener" style="color:var(--c-info)">Wikipedia</a>` : ''}` : ''}
       ${s.jagd ? '<br>🎯 Bei der Wochenend-Jagd gefangen' : ''}
     </div>
     <div class="d-knoepfe"><button class="panelButton danger" data-weg>🗑️ Löschen</button><button class="panelButton" data-zu>Schließen</button></div>`, o => {
@@ -1611,12 +1868,15 @@ function anleitungDialog() {
       <p><b>Fair bleiben:</b> Nur echte Fahrzeuge zählen. Fotos vom Bildschirm lehnt die App ab. Unscharfe Fotos kosten dich nichts – einfach nochmal.</p>
       <p><b>Deine Daten:</b> Deine Sammlung bleibt auf diesem Gerät. Kein Standort, keine Werbung.</p>
       <p><b>Vorix-Konto:</b> Wenn du willst, meldest du dich im Profil mit deinem Konto von Timer Challenge an. Dann steht dein Name aus Timer Challenge auch in Spotter. Der Vorix-Server prüft dabei nur Name und Passwort. Deine Sticker und Fotos bleiben auf dem Gerät.</p>
-      <p><b>Ehrlich gesagt:</b> Die KI ist nicht perfekt und irrt sich manchmal. Dann hilft ein Foto aus einem anderen Winkel.</p>
+      <p><b>🔍 Profi-KI für Autos:</b> Bei Autos sucht eine zweite KI das genaue Modell, zum Beispiel „Porsche 911". Sie kennt über 200 Modelle. Ist sie unsicher, wählst du selbst – und sie kontrolliert, ob deine Wahl passt. Nur was sie bestätigt, macht den Sticker seltener. Schummeln lohnt sich also nicht: Ein nicht bestätigtes Auto gibt nur den halben Wert.</p>
+      <p><b>📖 Steckbrief:</b> Zum erkannten Modell holt die App einen kurzen Text aus Wikipedia. Dabei wird nur der Modellname gesendet, nie dein Foto.</p>
+      <p><b>Ehrlich gesagt:</b> Beide KIs sind nicht perfekt und irren sich manchmal. Dann hilft ein Foto aus einem anderen Winkel.</p>
     </div>
     <button class="panelButton" data-ok>Verstanden</button>`, o => { o.querySelector('[data-ok]').onclick = () => o.remove(); }, { menu: true });
 }
 function einstellungenDialog() {
-  dialog(`<div class="m-kopf">⚙️ EINSTELLUNGEN</div><div class="m-sub">Vorix Spotter · Version 1.1</div>
+  dialog(`<div class="m-kopf">⚙️ EINSTELLUNGEN</div><div class="m-sub">Vorix Spotter · Version 1.2</div>
+    <button class="eintrag" data-a="profi">${profi ? '🔍 Profi-KI ist bereit ✅' : '🔍 Profi-KI vorab laden'}<small>Erkennt das genaue Automodell. Lädt einmalig etwa 35 MB – am besten im WLAN.</small></button>
     <button class="eintrag" data-a="sound">${profil.sound ? '🔊 Töne: an' : '🔇 Töne: aus'}<small>Tippen zum Umschalten</small></button>
     <button class="eintrag" data-a="sichern">💾 Sicherung speichern<small>Lädt deine ganze Sammlung als Datei herunter</small></button>
     <button class="eintrag" data-a="laden">📂 Sicherung laden<small>Holt eine gespeicherte Sammlung zurück</small></button>
@@ -1629,6 +1889,14 @@ function einstellungenDialog() {
       const a = b.dataset.a;
       if (a === 'zu') o.remove();
       if (a === 'sound') { profil.sound = !profil.sound; profilSpeichern(); b.innerHTML = (profil.sound ? '🔊 Töne: an' : '🔇 Töne: aus') + '<small>Tippen zum Umschalten</small>'; tonKlick(); }
+      if (a === 'profi' && !profi) {
+        b.firstChild.textContent = '🔍 Profi-KI lädt …';
+        try {
+          await profiLaden(ev => { if (ev && ev.status === 'progress' && /onnx/.test(ev.file || '')) b.firstChild.textContent = `🔍 Profi-KI lädt … ${Math.round(ev.progress || 0)} %`; });
+          b.firstChild.textContent = '🔍 Profi-KI ist bereit ✅';
+          toast('🔍 Die Profi-KI ist bereit');
+        } catch (e) { b.firstChild.textContent = '🔍 Profi-KI vorab laden'; toast('⚠️ Das hat nicht geklappt. Ist das Internet an?'); }
+      }
       if (a === 'sichern') sicherungSpeichern();
       if (a === 'laden') o.querySelector('#sicherung-datei').click();
       if (a === 'loeschen') {
