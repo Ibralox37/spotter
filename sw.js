@@ -9,10 +9,11 @@
    (Name beginnt mit "vorix-spotter-"). Fremde Speicher werden nie angefasst.
    ===================================================================== */
 
-const SPIEL = 'vorix-spotter-spiel-2';   // bei jeder neuen Version die Zahl erhöhen (2 = Vorix-Konto, 07.10.2026)
-const KI = 'vorix-spotter-ki-1';         // die KI-Dateien (ca. 15 MB), nur bei KI-Wechsel erhöhen
+const SPIEL = 'vorix-spotter-spiel-3';   // bei jeder neuen Version die Zahl erhöhen (3 = Profi-KI, 07.10.2026)
+const KI = 'vorix-spotter-ki-1';         // die KI-Dateien (MobileNet, Bibliotheken), nur bei KI-Wechsel erhöhen
 const DATEIEN = ['./', './index.html', './manifest.json', './vorix-logo-hell.png',
-  './favicon.png', './icon-192.png', './icon-512.png', './apple-touch-icon.png'];
+  './favicon.png', './icon-192.png', './icon-512.png', './apple-touch-icon.png', './profi-ki.js'];
+// Hinweis: Das Modell der Profi-KI (huggingface.co) speichert die Bibliothek selbst im Speicher „transformers-cache".
 
 // Diese Server liefern die KI (Bibliothek und Modell) und die Schriftarten.
 // Was von dort kommt, wird einmal gespeichert.
